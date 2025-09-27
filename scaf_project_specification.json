@@ -20,7 +20,17 @@
     },
     {
       "name": "Language Analyzers",
-      "components": ["LaTeX Analyzer", "Mermaid Analyzer", "Generic Parser"],
+      "components": [
+  "LaTeX Analyzer",
+  "Mermaid Analyzer",
+  "PlantUML Analyzer",
+  "Graphviz/DOT Analyzer",
+  "D2 Analyzer",
+  "Structurizr DSL Analyzer",
+  "Kroki Analyzer",
+  "AsciiDoctor Diagram Analyzer",
+  "Generic Parser"
+],
       "technologies": ["AST Extraction", "Formal Grammar", "Syntax Trees"]
     },
     {
