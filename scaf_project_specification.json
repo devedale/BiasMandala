@@ -21,16 +21,29 @@
     {
       "name": "Language Analyzers",
       "components": [
-  "LaTeX Analyzer",
-  "Mermaid Analyzer",
-  "PlantUML Analyzer",
-  "Graphviz/DOT Analyzer",
-  "D2 Analyzer",
-  "Structurizr DSL Analyzer",
-  "Kroki Analyzer",
-  "AsciiDoctor Diagram Analyzer",
-  "Generic Parser"
+    {
+      "name": "LaTeX Analyzer (TikZ)",
+      "reference": "https://texample.net/"
+    },
+    {
+      "name": "Mermaid Analyzer",
+      "reference": "https://docs.mermaidchart.com/mermaid-oss/syntax/examples.html"
+    },
+    {
+      "name": "PlantUML Analyzer",
+      "reference": "https://plantuml.com/sequence-diagram"
+    },
+    {
+      "name": "Graphviz/DOT Analyzer",
+      "reference": "https://graphviz.org/gallery/"
+    },
+    {
+      "name": "Kroki Analyzer",
+      "reference": "https://kroki.io/examples.html"
+    },
+    "Generic Parser"
 ],
+      "_comment": "We need to use ",
       "technologies": ["AST Extraction", "Formal Grammar", "Syntax Trees"]
     },
     {
