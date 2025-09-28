@@ -131,6 +131,22 @@ fusion:
     # will fall back to a simpler method.
     model_path: null # e.g., "/path/to/fusion_model.pth"
 
+# Economic-Topological Optimization Configuration
+economic_optimization:
+  # If enabled, the framework will select a single optimal scale for analysis
+  # instead of analyzing all possible scales.
+  enabled: false # Set to true to activate this feature
+
+  # The total computational budget for the analysis. The optimizer will not
+  # consider scales that are estimated to exceed this budget.
+  budget: 100.0
+
+  # A value between 0.0 and 1.0 that balances the trade-off.
+  # 1.0 = maximize richness, ignoring cost.
+  # 0.0 = minimize cost, ignoring richness.
+  # 0.5 = balanced trade-off.
+  richness_weight: 0.5
+
 # Bias Detection Configuration
 bias_detection:
   types:

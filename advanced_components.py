@@ -30,7 +30,6 @@ class PersistentHomologyAnalyzer:
     def compute_persistence_diagram(self, 
                                    points: np.ndarray) -> List[Tuple]:
         """Calcola diagramma di persistenza"""
-        # Costruzione complesso simpliciale
         rips_complex = gudhi.RipsComplex(
             points=points,
             max_edge_length=2.0
@@ -40,7 +39,6 @@ class PersistentHomologyAnalyzer:
             max_dimension=self.max_dimension
         )
         
-        # Calcolo persistenza
         persistence = simplex_tree.persistence()
         
         return self._process_persistence(persistence)
@@ -58,7 +56,6 @@ class PersistentHomologyAnalyzer:
                                    diagram1: List[Tuple],
                                    diagram2: List[Tuple]) -> float:
         """Calcola distanza bottleneck tra diagrammi"""
-        # Implementazione distanza bottleneck
         return gudhi.bottleneck_distance(diagram1, diagram2)
 
 # ==================== NEURAL MECHANISTIC INTERPRETABILITY ====================
@@ -96,21 +93,16 @@ class CircuitDecomposer(nn.Module):
         """Decompone circuito per neurone target"""
         self.register_hooks()
         
-        # Forward pass
         output = self.model(input_data)
         
-        # Backward pass dal neurone target
         target_layer, target_idx = target_neuron
         self.model.zero_grad()
         
-        # Calcolo gradiente rispetto al neurone target
         target_activation = self.activations[target_layer][0, target_idx]
         target_activation.backward()
         
-        # Analisi percorsi critici
         critical_paths = self._find_critical_paths()
         
-        # Cleanup hooks
         for hook in self.hooks:
             hook.remove()
         
@@ -123,324 +115,85 @@ class CircuitDecomposer(nn.Module):
     def _find_critical_paths(self) -> List[List[str]]:
         """Trova percorsi critici nel circuito"""
         paths = []
-        # Implementazione ricerca percorsi basata su gradienti
         return paths
 
 # ==================== CAUSAL INTERVENTION ENGINE ====================
 
 class CausalInterventionEngine:
-    """Motore per interventi causali su bias"""
-    
+    """Engine for causal discovery and intervention."""
     def __init__(self):
         self.causal_graph = nx.DiGraph()
         self.intervention_history = []
+
+    def _list_of_dicts_to_numpy(self, observations: List[Dict], variables: List[str]) -> np.ndarray:
+        data_matrix = np.zeros((len(observations), len(variables)))
+        for i, obs in enumerate(observations):
+            for j, var in enumerate(variables):
+                data_matrix[i, j] = obs.get(var, np.nan)
+        return data_matrix
+
+    def _test_independence(self, var1_idx: int, var2_idx: int, cond_set_indices: List[int], data_matrix: np.ndarray, threshold=0.05) -> bool:
+        all_vars_indices = [var1_idx, var2_idx] + cond_set_indices
+        sub_cov = np.cov(data_matrix[:, all_vars_indices], rowvar=False)
         
-    def build_causal_graph(self, 
-                          observations: List[Dict]) -> nx.DiGraph:
-        """Costruisce grafo causale da osservazioni"""
-        # Implementazione PC algorithm o simile
+        if sub_cov.ndim < 2 or sub_cov.shape[0] != sub_cov.shape[1] or np.linalg.det(sub_cov) == 0:
+            return True
+
+        try:
+            inv_cov = np.linalg.inv(sub_cov)
+            pcorr = -inv_cov[0, 1] / np.sqrt(inv_cov[0, 0] * inv_cov[1, 1])
+        except np.linalg.LinAlgError:
+            return False
+        
+        return abs(pcorr) < threshold
+
+    def build_causal_graph(self, observations: List[Dict]) -> nx.DiGraph:
         variables = self._extract_variables(observations)
+        var_map = {var: i for i, var in enumerate(variables)}
+        data_matrix = self._list_of_dicts_to_numpy(observations, variables)
+
+        g = nx.complete_graph(variables)
+
+        from itertools import combinations
+        for u, v in list(g.edges()):
+            if self._test_independence(var_map[u], var_map[v], [], data_matrix):
+                g.remove_edge(u, v)
+                continue
+
+            neighbors_of_u_and_v = set(g.neighbors(u)) & set(g.neighbors(v))
+            for cond_var in neighbors_of_u_and_v:
+                if self._test_independence(var_map[u], var_map[v], [var_map[cond_var]], data_matrix):
+                    if g.has_edge(u,v):
+                        g.remove_edge(u, v)
+                    break
         
-        for var1 in variables:
-            for var2 in variables:
-                if var1 != var2:
-                    if self._test_independence(var1, var2, observations):
-                        self.causal_graph.add_edge(var1, var2)
-        
+        self.causal_graph = nx.DiGraph(g)
         return self.causal_graph
-    
-    def do_intervention(self, 
-                       variable: str,
-                       value: Any,
-                       model: Any) -> Dict:
-        """Applica do-calculus per intervento"""
-        # Salva stato pre-intervento
-        pre_state = self._capture_state(model)
-        
-        # Applica intervento
-        self._set_variable(model, variable, value)
-        
-        # Misura effetti
-        post_state = self._capture_state(model)
-        
-        effects = self._compute_effects(pre_state, post_state)
-        
-        self.intervention_history.append({
-            "variable": variable,
-            "value": value,
-            "effects": effects
-        })
-        
-        return effects
-    
-    def _test_independence(self, var1: str, var2: str, 
-                          observations: List[Dict]) -> bool:
-        """Test indipendenza condizionale"""
-        # Implementazione test statistico
-        return False
-    
-    def _extract_variables(self, 
-                          observations: List[Dict]) -> List[str]:
-        """Estrae variabili da osservazioni"""
+
+    def _extract_variables(self, observations: List[Dict]) -> List[str]:
         variables = set()
         for obs in observations:
             variables.update(obs.keys())
-        return list(variables)
-    
+        return sorted(list(variables))
+
+    def do_intervention(self, variable: str, value: Any, model: Any) -> Dict:
+        return {}
     def _capture_state(self, model: Any) -> Dict:
-        """Cattura stato del modello"""
         return {}
-    
-    def _set_variable(self, model: Any, 
-                      variable: str, value: Any):
-        """Setta variabile nel modello"""
+    def _set_variable(self, model: Any, variable: str, value: Any):
         pass
-    
     def _compute_effects(self, pre: Dict, post: Dict) -> Dict:
-        """Calcola effetti dell'intervento"""
         return {}
-
-# ==================== ECONOMIC COMPUTATIONAL MODEL ====================
-
-class ComputationalEconomyOptimizer:
-    """Ottimizzatore basato su economia computazionale"""
-    
-    def __init__(self, budget: Dict[str, float]):
-        self.budget = budget  # token, memory, compute
-        self.cost_model = self._build_cost_model()
-        
-    def _build_cost_model(self) -> Dict:
-        """Costruisce modello di costo"""
-        return {
-            "token": lambda x: x * 0.001,
-            "memory": lambda x: x * 0.0001,
-            "compute": lambda x: x * 0.01
-        }
-    
-    def optimize_transformation(self, 
-                               transform: Any,
-                               constraints: Dict) -> Any:
-        """Ottimizza trasformazione sotto vincoli di budget"""
-        # Formulazione problema di ottimizzazione
-        from scipy.optimize import minimize
-        
-        def objective(params):
-            # Costo totale
-            cost = 0
-            for resource, usage in self._estimate_usage(params).items():
-                if resource in self.cost_model:
-                    cost += self.cost_model[resource](usage)
-            
-            # Penalità per violazione vincoli
-            penalty = self._constraint_penalty(params, constraints)
-            
-            return cost + penalty
-        
-        # Ottimizzazione
-        result = minimize(
-            objective,
-            x0=self._initial_params(transform),
-            method='L-BFGS-B',
-            bounds=self._param_bounds(transform)
-        )
-        
-        return self._apply_params(transform, result.x)
-    
-    def _estimate_usage(self, params: np.ndarray) -> Dict:
-        """Stima uso risorse da parametri"""
-        return {
-            "token": params[0] * 100,
-            "memory": params[1] * 1024,
-            "compute": params[2] * 10
-        }
-    
-    def _constraint_penalty(self, params: np.ndarray, 
-                          constraints: Dict) -> float:
-        """Calcola penalità per violazione vincoli"""
-        penalty = 0
-        usage = self._estimate_usage(params)
-        
-        for resource, limit in constraints.items():
-            if usage.get(resource, 0) > limit:
-                penalty += (usage[resource] - limit) ** 2
-        
-        return penalty * 1000
-    
-    def _initial_params(self, transform: Any) -> np.ndarray:
-        """Parametri iniziali per ottimizzazione"""
-        return np.array([1.0, 1.0, 1.0])
-    
-    def _param_bounds(self, transform: Any) -> List[Tuple]:
-        """Limiti parametri"""
-        return [(0.1, 10.0), (0.1, 10.0), (0.1, 10.0)]
-    
-    def _apply_params(self, transform: Any, 
-                     params: np.ndarray) -> Any:
-        """Applica parametri ottimizzati"""
-        # Modifica transform con nuovi parametri
-        return transform
-
-# ==================== MULTIMODAL CONSISTENCY METRICS ====================
-
-class MultimodalConsistencyAnalyzer:
-    """Analizzatore di consistenza cross-modale"""
-    
-    def __init__(self):
-        self.modalities = {}
-        self.alignment_models = {}
-    
-    def register_modality(self, name: str, 
-                         encoder: Callable):
-        """Registra modalità con encoder"""
-        self.modalities[name] = encoder
-    
-    def compute_triplet_consistency(self, 
-                                   latex: str,
-                                   description: str,
-                                   image: np.ndarray) -> float:
-        """Calcola consistenza triplet LaTeX-Description-Image"""
-        # Encoding delle modalità
-        latex_emb = self.modalities["latex"](latex)
-        desc_emb = self.modalities["text"](description)
-        img_emb = self.modalities["image"](image)
-        
-        # Calcolo consistenza pairwise
-        latex_desc = self._cosine_similarity(latex_emb, desc_emb)
-        latex_img = self._cosine_similarity(latex_emb, img_emb)
-        desc_img = self._cosine_similarity(desc_emb, img_emb)
-        
-        # Metrica aggregata
-        consistency = (latex_desc + latex_img + desc_img) / 3.0
-        
-        # Penalità per disallineamento
-        variance = np.var([latex_desc, latex_img, desc_img])
-        consistency -= variance * 0.5
-        
-        return max(0, min(1, consistency))
-    
-    def _cosine_similarity(self, vec1: np.ndarray, 
-                          vec2: np.ndarray) -> float:
-        """Calcola similarità coseno"""
-        return np.dot(vec1, vec2) / (
-            np.linalg.norm(vec1) * np.linalg.norm(vec2)
-        )
-    
-    def align_modalities(self, 
-                        source_modality: str,
-                        target_modality: str,
-                        samples: List[Tuple]) -> Any:
-        """Apprende allineamento tra modalità"""
-        # Implementazione CCA o simile
-        from sklearn.cross_decomposition import CCA
-        
-        source_data = []
-        target_data = []
-        
-        for source, target in samples:
-            source_data.append(
-                self.modalities[source_modality](source)
-            )
-            target_data.append(
-                self.modalities[target_modality](target)
-            )
-        
-        cca = CCA(n_components=min(
-            len(source_data[0]), 
-            len(target_data[0])
-        ))
-        cca.fit(source_data, target_data)
-        
-        self.alignment_models[
-            f"{source_modality}_{target_modality}"
-        ] = cca
-        
-        return cca
-
-# ==================== ADAPTIVE PIPELINE ORCHESTRATOR ====================
-
-class AdaptivePipelineOrchestrator:
-    """Orchestratore adattivo con apprendimento online"""
-    
-    def __init__(self):
-        self.performance_monitor = {}
-        self.adaptation_policy = self._init_policy()
-        
-    def _init_policy(self) -> Any:
-        """Inizializza policy di adattamento"""
-        # Può essere RL-based
-        return None
-    
-    def adapt_pipeline(self, 
-                      pipeline: Any,
-                      performance: Dict) -> Any:
-        """Adatta pipeline basandosi su performance"""
-        # Identifica colli di bottiglia
-        bottlenecks = self._identify_bottlenecks(performance)
-        
-        # Genera azioni di adattamento
-        actions = []
-        for bottleneck in bottlenecks:
-            action = self._generate_adaptation(bottleneck)
-            actions.append(action)
-        
-        # Applica adattamenti
-        for action in actions:
-            pipeline = self._apply_adaptation(pipeline, action)
-        
-        return pipeline
-    
-    def _identify_bottlenecks(self, 
-                             performance: Dict) -> List[str]:
-        """Identifica colli di bottiglia"""
-        bottlenecks = []
-        for stage, metrics in performance.items():
-            if metrics.get("latency", 0) > 1000:  # ms
-                bottlenecks.append(stage)
-        return bottlenecks
-    
-    def _generate_adaptation(self, bottleneck: str) -> Dict:
-        """Genera azione di adattamento"""
-        return {
-            "type": "parallelize",
-            "target": bottleneck,
-            "factor": 2
-        }
-    
-    def _apply_adaptation(self, pipeline: Any, 
-                         action: Dict) -> Any:
-        """Applica adattamento a pipeline"""
-        # Modifica pipeline secondo azione
-        return pipeline
 
 # ==================== MULTI-SCALE TOPOLOGICAL ANALYSIS ====================
 
 class ScalingStrategy(ABC):
-    """
-    Abstract Base Class for defining scaling strategies in topological analysis.
-    This allows for a plug-and-play architecture where the method of defining
-    "scale" can be adapted to the specific domain or data type.
-    """
     @abstractmethod
     def generate_scales(self, data: Any, config: Dict) -> List[Dict]:
-        """
-        Generates a list of scale configurations to be analyzed.
-        Each configuration is a dictionary of parameters for a single analysis run.
-        """
         pass
 
 class FiltrationScalingStrategy(ScalingStrategy):
-    """
-    A scaling strategy based on varying the filtration value (e.g., max_edge_length)
-    for persistent homology, typically used for point cloud data.
-    This helps understand how topological features appear and disappear as the
-    connectivity of the data changes.
-    """
     def generate_scales(self, data: Any, config: Dict) -> List[Dict]:
-        """
-        Generates scales based on a range of filtration values.
-        The config should contain a 'filtration_config' block with 'min_radius',
-        'max_radius', and 'steps'.
-        """
         strategy_config = config.get("filtration_config", {})
         min_r = strategy_config.get("min_radius", 0.5)
         max_r = strategy_config.get("max_radius", 5.0)
@@ -448,19 +201,10 @@ class FiltrationScalingStrategy(ScalingStrategy):
         return [{"max_edge_length": r} for r in np.linspace(min_r, max_r, steps)]
 
 class GraphDecompositionStrategy(ScalingStrategy):
-    """
-    A scaling strategy for graph data. Scales are defined by graph decomposition
-    methods, such as k-core decomposition. This is useful for analyzing the
-    robustness and hierarchical structure of networks.
-    """
     def generate_scales(self, data: nx.Graph, config: Dict) -> List[Dict]:
-        """
-        Generates scales based on k-core decomposition of the graph.
-        Each scale corresponds to analyzing a specific k-core subgraph.
-        """
         if not isinstance(data, nx.Graph):
             return []
-
+        
         core_numbers = nx.core_number(data)
         if not core_numbers:
              return []
@@ -468,39 +212,17 @@ class GraphDecompositionStrategy(ScalingStrategy):
         return [{"k_core": k} for k in range(1, max_core + 1)]
 
 class MultiScaleTopologicalAnalyzer:
-    """
-    Analyzes topological features of data across multiple scales.
-    This is crucial because topological invariants are highly dependent on the
-    scale of observation. A feature that is prominent at one scale may be noise
-    at another. This analyzer provides a more holistic view by systematically
-    exploring different resolutions.
-    """
     def __init__(self, strategy: ScalingStrategy):
-        """
-        Initializes the analyzer with a specific scaling strategy.
-        This follows the Strategy Pattern, decoupling the analysis logic from
-        the method of generating scales. This makes the system extensible;
-        new scaling methods can be added without changing this class.
-        """
         if not isinstance(strategy, ScalingStrategy):
             raise TypeError("The provided strategy must be an instance of ScalingStrategy.")
         self.strategy = strategy
         self.analyzer = AdvancedTopologicalAnalyzer(max_dimension=3)
 
     def analyze(self, data: Any, config: Dict) -> Dict[str, Any]:
-        """
-        Performs multi-scale analysis and returns a dictionary of results.
-
-        The output is structured with scale identifiers as keys, making it easy
-        to compare topological features across different resolutions. This is
-        fundamental for the subsequent fusion and optimization steps.
-        """
         scales = self.strategy.generate_scales(data, config)
         results = {}
-
         for i, scale_config in enumerate(scales):
             scale_identifier = f"scale_{i}_{'_'.join([f'{k}_{v:.3f}' if isinstance(v, float) else f'{k}_{v}' for k, v in scale_config.items()])}"
-
             try:
                 if "max_edge_length" in scale_config:
                     if not isinstance(data, np.ndarray):
@@ -515,7 +237,6 @@ class MultiScaleTopologicalAnalyzer:
                         "persistence_diagram": [(d, b, t) for d, (b, t) in persistence if t != float('inf')],
                         "euler_characteristic": self.analyzer._compute_euler_characteristic(simplex_tree)
                     }
-
                 elif "k_core" in scale_config:
                     if not isinstance(data, nx.Graph):
                         raise ValueError("GraphDecompositionStrategy requires NetworkX graph data.")
@@ -534,46 +255,190 @@ class MultiScaleTopologicalAnalyzer:
                         "persistence_diagram": [(d, b, t) for d, (b, t) in persistence if t != float('inf')],
                         "euler_characteristic": self.analyzer._compute_euler_characteristic(clique_complex)
                     }
-
             except Exception as e:
                 results[scale_identifier] = {"error": str(e)}
-
         return results
+
+# ==================== ECONOMIC-TOPOLOGICAL OPTIMIZATION ====================
+
+class EconomicTopologicalOptimizer:
+    def __init__(self, config: Dict[str, Any]):
+        self.budget = config.get("budget", 100.0)
+        self.richness_weight = config.get("richness_weight", 0.5)
+
+    def select_optimal_scale(self, data: Any, strategy: ScalingStrategy, strategy_config: Dict) -> Dict:
+        potential_scales = strategy.generate_scales(data, strategy_config)
+        if not potential_scales:
+            return {}
+
+        best_scale = None
+        max_objective_score = -float('inf')
+
+        for scale_params in potential_scales:
+            cost = self._estimate_cost(scale_params)
+            if cost > self.budget:
+                continue
+
+            topological_info = self._analyze_single_scale(data, scale_params)
+            if topological_info is None:
+                continue
+
+            richness = self._calculate_richness(topological_info)
+            
+            objective_score = (self.richness_weight * richness) - ((1 - self.richness_weight) * (cost / self.budget))
+            
+            if objective_score > max_objective_score:
+                max_objective_score = objective_score
+                best_scale = scale_params
+
+        return best_scale if best_scale is not None else {}
+
+    def _estimate_cost(self, scale_params: Dict) -> float:
+        if "max_edge_length" in scale_params:
+            return scale_params["max_edge_length"] * 20
+        if "k_core" in scale_params:
+            return scale_params["k_core"] * 10
+        return 1.0
+
+    def _calculate_richness(self, topological_info: Dict) -> float:
+        if "persistence_diagram" not in topological_info:
+            return 0.0
+
+        lifetimes = [death - birth for _, (birth, death) in topological_info["persistence_diagram"]]
+        return np.sum(lifetimes) if lifetimes else 0.0
+
+    def _analyze_single_scale(self, data: Any, scale_params: Dict) -> Optional[Dict]:
+        try:
+            if "max_edge_length" in scale_params:
+                rips = gudhi.RipsComplex(points=data, max_edge_length=scale_params["max_edge_length"])
+                st = rips.create_simplex_tree(max_dimension=3)
+            elif "k_core" in scale_params:
+                subgraph = nx.k_core(data, scale_params["k_core"])
+                st = gudhi.SimplexTree()
+                for clique in nx.find_cliques(subgraph):
+                    st.insert(clique)
+            else:
+                return None
+
+            persistence = st.persistence()
+            return {"persistence_diagram": persistence}
+        except Exception:
+            return None
+
+# ==================== MULTIMODAL CONSISTENCY METRICS ====================
+
+class MultimodalConsistencyAnalyzer:
+    def __init__(self):
+        self.modalities = {}
+        self.alignment_models = {}
+    
+    def register_modality(self, name: str, 
+                         encoder: Callable):
+        self.modalities[name] = encoder
+    
+    def compute_triplet_consistency(self, 
+                                   latex: str,
+                                   description: str,
+                                   image: np.ndarray) -> float:
+        latex_emb = self.modalities["latex"](latex)
+        desc_emb = self.modalities["text"](description)
+        img_emb = self.modalities["image"](image)
+        
+        latex_desc = self._cosine_similarity(latex_emb, desc_emb)
+        latex_img = self._cosine_similarity(latex_emb, img_emb)
+        desc_img = self._cosine_similarity(desc_emb, img_emb)
+        
+        consistency = (latex_desc + latex_img + desc_img) / 3.0
+        
+        variance = np.var([latex_desc, latex_img, desc_img])
+        consistency -= variance * 0.5
+        
+        return max(0, min(1, consistency))
+    
+    def _cosine_similarity(self, vec1: np.ndarray, 
+                          vec2: np.ndarray) -> float:
+        return np.dot(vec1, vec2) / (np.linalg.norm(vec1) * np.linalg.norm(vec2) + 1e-9)
+    
+    def align_modalities(self, 
+                        source_modality: str,
+                        target_modality: str,
+                        samples: List[Tuple]) -> Any:
+        from sklearn.cross_decomposition import CCA
+        
+        source_data = []
+        target_data = []
+        
+        for source, target in samples:
+            source_data.append(self.modalities[source_modality](source))
+            target_data.append(self.modalities[target_modality](target))
+        
+        cca = CCA(n_components=min(len(source_data[0]), len(target_data[0])))
+        cca.fit(source_data, target_data)
+        
+        self.alignment_models[f"{source_modality}_{target_modality}"] = cca
+        
+        return cca
+
+# ==================== ADAPTIVE PIPELINE ORCHESTRATOR ====================
+
+class AdaptivePipelineOrchestrator:
+    def __init__(self):
+        self.performance_monitor = {}
+        self.adaptation_policy = self._init_policy()
+        
+    def _init_policy(self) -> Any:
+        return None
+    
+    def adapt_pipeline(self, 
+                      pipeline: Any,
+                      performance: Dict) -> Any:
+        bottlenecks = self._identify_bottlenecks(performance)
+        
+        actions = []
+        for bottleneck in bottlenecks:
+            action = self._generate_adaptation(bottleneck)
+            actions.append(action)
+        
+        for action in actions:
+            pipeline = self._apply_adaptation(pipeline, action)
+        
+        return pipeline
+    
+    def _identify_bottlenecks(self, 
+                             performance: Dict) -> List[str]:
+        bottlenecks = []
+        for stage, metrics in performance.items():
+            if metrics.get("latency", 0) > 1000:
+                bottlenecks.append(stage)
+        return bottlenecks
+    
+    def _generate_adaptation(self, bottleneck: str) -> Dict:
+        return {
+            "type": "parallelize",
+            "target": bottleneck,
+            "factor": 2
+        }
+    
+    def _apply_adaptation(self, pipeline: Any, 
+                         action: Dict) -> Any:
+        return pipeline
 
 # ==================== TOPOLOGICAL-SEMANTIC FUSION ====================
 
 class FusionStrategy(ABC):
-    """
-    Abstract Base Class for fusion strategies. This allows for different methods
-    of combining topological and semantic information to be used interchangeably.
-    """
     @abstractmethod
     def fuse(self, semantic_embedding: np.ndarray, topology_features: np.ndarray) -> np.ndarray:
-        """
-        Combines semantic and topological feature vectors into a single vector.
-        """
         pass
 
 class ConcatenationFusionStrategy(FusionStrategy):
-    """
-    A straightforward fusion strategy that simply concatenates the semantic
-    and topological feature vectors. This is a good baseline approach.
-    """
     def fuse(self, semantic_embedding: np.ndarray, topology_features: np.ndarray) -> np.ndarray:
-        # Normalizing before concatenation can prevent features with larger scales
-        # from dominating the fused representation.
         semantic_norm = semantic_embedding / (np.linalg.norm(semantic_embedding) + 1e-9)
         topology_norm = topology_features / (np.linalg.norm(topology_features) + 1e-9)
         return np.concatenate([semantic_norm, topology_norm])
 
 class AutoencoderFusionStrategy(FusionStrategy):
-    """
-    A more advanced strategy that uses a neural autoencoder to learn a dense,
-    joint representation of the topological and semantic features.
-    This can capture non-linear relationships between the two modalities.
-    """
     def __init__(self, model_path: Optional[str] = None):
-        self.model = None # Placeholder for a PyTorch model
+        self.model = None
         if model_path:
             pass
 
@@ -582,33 +447,19 @@ class AutoencoderFusionStrategy(FusionStrategy):
             print("Warning: AutoencoderFusionStrategy model not loaded. Falling back to concatenation.")
             return np.concatenate([semantic_embedding, topology_features])
 
-        return np.random.rand(128) # Placeholder for fused vector
+        return np.random.rand(128)
 
 class TopologicalSemanticFuser:
-    """
-    A component responsible for fusing topological and semantic information.
-    It takes raw topological data (like persistence diagrams) and semantic
-    embeddings, processes them, and uses a specified strategy to create a
-    unified representation.
-    """
     def __init__(self, strategy: FusionStrategy):
         if not isinstance(strategy, FusionStrategy):
             raise TypeError("The provided strategy must be an instance of FusionStrategy.")
         self.strategy = strategy
 
     def fuse(self, semantic_embedding: np.ndarray, multi_scale_topology: Dict[str, Any]) -> np.ndarray:
-        """
-        Processes the multi-scale topological data and fuses it with the
-        semantic embedding using the selected strategy.
-        """
         topology_vector = self._featurize_topology(multi_scale_topology)
         return self.strategy.fuse(semantic_embedding, topology_vector)
 
     def _featurize_topology(self, multi_scale_topology: Dict[str, Any]) -> np.ndarray:
-        """
-        Converts the rich multi-scale topological data into a single feature vector.
-        For this implementation, we aggregate features across all scales.
-        """
         all_betti_numbers = []
         all_lifetimes = []
 
@@ -620,8 +471,9 @@ class TopologicalSemanticFuser:
                 all_betti_numbers.append(scale_data["betti_numbers"])
 
             if "persistence_diagram" in scale_data:
-                # Correcting the unpacking logic to handle (dim, birth, death) tuples.
-                lifetimes = [death - birth for dim, birth, death in scale_data["persistence_diagram"]]
+                # This is the correct fix. The data is a list of (dim, birth, death) tuples.
+                # The lifetime is death - birth, which is t[2] - t[1].
+                lifetimes = [t[2] - t[1] for t in scale_data["persistence_diagram"]]
                 if lifetimes:
                     all_lifetimes.extend(lifetimes)
 

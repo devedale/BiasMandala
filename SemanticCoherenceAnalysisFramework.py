@@ -20,7 +20,8 @@ from advanced_components import (
     TopologicalSemanticFuser,
     ConcatenationFusionStrategy,
     AutoencoderFusionStrategy,
-    FusionStrategy
+    FusionStrategy,
+    EconomicTopologicalOptimizer
 )
 
 # ==================== CORE ABSTRACTIONS ====================
@@ -371,6 +372,7 @@ class SemanticCoherenceAnalyzer:
         self.meta_learner = MetaLearner()
         self.multi_scale_analyzer = None # Will be initialized by the setup method
         self.fuser = None # Will be initialized by the setup method
+        self.economic_optimizer = None # Will be initialized by the setup method
         
         # Registro analizzatori
         self.analyzers = {
@@ -381,6 +383,7 @@ class SemanticCoherenceAnalyzer:
         self._setup_pipeline()
         self._setup_multi_scale_analyzer()
         self._setup_fuser()
+        self._setup_economic_optimizer()
     
     def _default_config(self) -> Dict:
         """Configurazione di default"""
@@ -447,6 +450,14 @@ class SemanticCoherenceAnalyzer:
             strategy_instance = strategy_class()
 
         self.fuser = TopologicalSemanticFuser(strategy=strategy_instance)
+
+    def _setup_economic_optimizer(self):
+        """
+        Initializes the EconomicTopologicalOptimizer if it is enabled in the configuration.
+        """
+        config = self.config.get("economic_optimization", {})
+        if config.get("enabled", False):
+            self.economic_optimizer = EconomicTopologicalOptimizer(config)
     
     def analyze(self, input_data: Any, 
                 language: Optional[str] = None, data_type: str = 'point_cloud') -> Dict[str, Any]:
@@ -469,7 +480,34 @@ class SemanticCoherenceAnalyzer:
 
         if self.multi_scale_analyzer is None:
             raise RuntimeError("MultiScaleTopologicalAnalyzer is not initialized.")
-        multi_scale_topology = self.multi_scale_analyzer.analyze(analysis_data, topology_config)
+
+        # --- Economic Optimization Meta-Stage ---
+        # If the economic optimizer is enabled, we use it to select a single,
+        # optimal scale instead of performing a full multi-scale analysis.
+        if self.economic_optimizer:
+            strategy = self.multi_scale_analyzer.strategy
+            optimal_scale_params = self.economic_optimizer.select_optimal_scale(
+                analysis_data, strategy, topology_config
+            )
+
+            # If an optimal scale is found, analyze only that scale.
+            if optimal_scale_params:
+                # To analyze a single scale, we create a temporary strategy
+                # that only generates that one scale.
+                class SingleScaleStrategy(ScalingStrategy):
+                    def __init__(self, scale_params):
+                        self.scale_params = scale_params
+                    def generate_scales(self, data, config):
+                        return [self.scale_params]
+
+                single_scale_analyzer = MultiScaleTopologicalAnalyzer(strategy=SingleScaleStrategy(optimal_scale_params))
+                multi_scale_topology = single_scale_analyzer.analyze(analysis_data, {})
+            else:
+                # If no scale meets the budget, we get an empty result.
+                multi_scale_topology = {}
+        else:
+            # If optimizer is disabled, perform the full multi-scale analysis.
+            multi_scale_topology = self.multi_scale_analyzer.analyze(analysis_data, topology_config)
 
         # 2. Semantic Embedding and Fusion
         # In a real implementation, a semantic model would produce this embedding.

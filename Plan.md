@@ -78,7 +78,7 @@ The work is divided into four sequential sprints, each with clear objectives and
 
 ---
 
-### Sprint 3: Economic-Topological Optimization
+### Sprint 3: Economic-Topological Optimization - ⏳ IN PROGRESS
 
 **Objective:** Balance the computational cost of the analysis with the richness of the extracted topological information.
 
