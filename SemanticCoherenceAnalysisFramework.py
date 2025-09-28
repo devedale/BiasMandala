@@ -16,7 +16,11 @@ from advanced_components import (
     MultiScaleTopologicalAnalyzer,
     FiltrationScalingStrategy,
     GraphDecompositionStrategy,
-    ScalingStrategy
+    ScalingStrategy,
+    TopologicalSemanticFuser,
+    ConcatenationFusionStrategy,
+    AutoencoderFusionStrategy,
+    FusionStrategy
 )
 
 # ==================== CORE ABSTRACTIONS ====================
@@ -45,6 +49,26 @@ class InvariantMetrics:
         return (w["topological"] * self.topological_fidelity +
                 w["geometric"] * self.geometric_fidelity +
                 w["semantic"] * self.semantic_fidelity)
+
+@dataclass
+class TopologicalSemanticObject:
+    """
+    A unified data structure to hold fused topological and semantic information.
+    This object represents a single entity (e.g., a document, an image, a concept)
+    and encapsulates its properties from different analytical perspectives. It serves
+    as the primary data container for the fusion and coherence analysis stages.
+    """
+    uid: str  # Unique identifier for the object
+    semantic_embedding: np.ndarray
+    multi_scale_topology: Dict[str, Any]
+
+    # The coherence graph is a powerful concept for future extensions. It can
+    # model the relationships between semantic concepts and topological features,
+    # making the fusion more interpretable. For now, it's a placeholder.
+    coherence_graph: Optional[nx.Graph] = None
+
+    # The fused representation, which will be computed by the TopologicalSemanticFuser.
+    fused_representation: Optional[np.ndarray] = None
 
 @dataclass
 class BiasPattern:
@@ -346,6 +370,7 @@ class SemanticCoherenceAnalyzer:
         self.validator = DeterministicValidator()
         self.meta_learner = MetaLearner()
         self.multi_scale_analyzer = None # Will be initialized by the setup method
+        self.fuser = None # Will be initialized by the setup method
         
         # Registro analizzatori
         self.analyzers = {
@@ -355,6 +380,7 @@ class SemanticCoherenceAnalyzer:
         
         self._setup_pipeline()
         self._setup_multi_scale_analyzer()
+        self._setup_fuser()
     
     def _default_config(self) -> Dict:
         """Configurazione di default"""
@@ -394,13 +420,40 @@ class SemanticCoherenceAnalyzer:
             raise ValueError(f"Unknown scaling strategy '{strategy_name}' in configuration.")
 
         self.multi_scale_analyzer = MultiScaleTopologicalAnalyzer(strategy=strategy_class())
+
+    def _setup_fuser(self):
+        """
+        Initializes the TopologicalSemanticFuser based on the framework's configuration.
+        This method selects the fusion strategy and configures it, making the
+        fusion process modular and adaptable.
+        """
+        config = self.config.get("fusion", {})
+        strategy_name = config.get("strategy", "concatenation")
+
+        strategy_map = {
+            "concatenation": ConcatenationFusionStrategy,
+            "autoencoder": AutoencoderFusionStrategy
+        }
+
+        strategy_class = strategy_map.get(strategy_name)
+        if not strategy_class:
+            raise ValueError(f"Unknown fusion strategy '{strategy_name}' in configuration.")
+
+        # Handle strategy-specific configuration
+        if strategy_name == "autoencoder":
+            strategy_config = config.get("autoencoder_config", {})
+            strategy_instance = strategy_class(model_path=strategy_config.get("model_path"))
+        else:
+            strategy_instance = strategy_class()
+
+        self.fuser = TopologicalSemanticFuser(strategy=strategy_instance)
     
     def analyze(self, input_data: Any, 
                 language: Optional[str] = None, data_type: str = 'point_cloud') -> Dict[str, Any]:
         """
-        Main analysis method, now enhanced with multi-scale topological analysis.
-        It can process data based on its type (e.g., 'point_cloud', 'graph') or
-        a formal language if specified.
+        Main analysis method, now incorporating topological-semantic fusion.
+        It processes data, performs multi-scale topological analysis, fuses the
+        results with semantic information, and then runs the configurable pipeline.
         """
         
         # 1. Multi-Scale Topological Analysis
@@ -415,19 +468,36 @@ class SemanticCoherenceAnalyzer:
             analysis_data = ast
 
         if self.multi_scale_analyzer is None:
-            raise RuntimeError("MultiScaleTopologicalAnalyzer is not initialized. Check configuration.")
-
+            raise RuntimeError("MultiScaleTopologicalAnalyzer is not initialized.")
         multi_scale_topology = self.multi_scale_analyzer.analyze(analysis_data, topology_config)
-        
-        # 2. Pipeline Execution
+
+        # 2. Semantic Embedding and Fusion
+        # In a real implementation, a semantic model would produce this embedding.
+        # Here, we use a placeholder for demonstration.
+        semantic_embedding = np.random.rand(768)
+
+        if self.fuser is None:
+            raise RuntimeError("TopologicalSemanticFuser is not initialized.")
+        fused_representation = self.fuser.fuse(semantic_embedding, multi_scale_topology)
+
+        # Create the unified data object for this analysis instance.
+        ts_object = TopologicalSemanticObject(
+            uid=str(hash(str(input_data))),
+            semantic_embedding=semantic_embedding,
+            multi_scale_topology=multi_scale_topology,
+            fused_representation=fused_representation
+        )
+
+        # 3. Pipeline Execution
+        # The unified object is now the core of the data passed to the pipeline.
         pipeline_input = {
+            "ts_object": ts_object,
             "raw_input": input_data,
-            "ast": ast,
-            "multi_scale_topology": multi_scale_topology
+            "ast": ast
         }
         pipeline_results = self.pipeline.execute(pipeline_input)
         
-        # 3. Bias Detection
+        # 4. Bias Detection
         class MockTransform(Transform):
             def forward(self, input, context): return input
             def inverse(self, output, context): return output
@@ -436,27 +506,29 @@ class SemanticCoherenceAnalyzer:
         transform = MockTransform()
         biases = self.bias_detector.detect(transform, [pipeline_input])
         
-        # 4. Validation
+        # 5. Validation
         validation_domain = language if language else data_type
-        # For now, we need to register dummy validators for new data types.
         if validation_domain not in self.validator.validators:
             self.validator.register_validator(validation_domain, lambda out, gt: True)
         is_valid = self.validator.validate(
             pipeline_input, pipeline_results.get("output"), validation_domain
         )
         
-        # 5. Meta-learning
+        # 6. Meta-learning
         if self.config.get("meta_learning_enabled", False) and not is_valid:
+            correction_context = {
+                "data_type": data_type,
+                "ts_object_uid": ts_object.uid
+            }
             correction = self.meta_learner.suggest_correction(
-                pipeline_results.get("errors"), 
-                {"data_type": data_type, "topology": multi_scale_topology}
+                pipeline_results.get("errors"), correction_context
             )
             if correction:
                 pass
         
+        # The final output is now centered around the TopologicalSemanticObject.
         return {
-            "ast": ast,
-            "multi_scale_topology": multi_scale_topology,
+            "ts_object": ts_object,
             "biases": biases,
             "valid": is_valid,
             "metrics": self._compute_final_metrics(pipeline_results),

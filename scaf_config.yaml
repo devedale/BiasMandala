@@ -119,6 +119,18 @@ multi_scale_topology:
     # but we can add placeholders for future extensions (e.g., community detection resolution).
     placeholder: "value"
 
+# Topological-Semantic Fusion Configuration
+fusion:
+  # Defines the strategy for fusing topological and semantic features.
+  # Available options: "concatenation", "autoencoder"
+  strategy: "concatenation"
+
+  # Configuration for the 'autoencoder' strategy.
+  autoencoder_config:
+    # Path to a pre-trained autoencoder model. If null, the strategy
+    # will fall back to a simpler method.
+    model_path: null # e.g., "/path/to/fusion_model.pth"
+
 # Bias Detection Configuration
 bias_detection:
   types:

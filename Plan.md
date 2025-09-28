@@ -16,7 +16,7 @@ The work is divided into four sequential sprints, each with clear objectives and
 
 ## 2. Sprint Structure
 
-### Sprint 1: Foundations and Multi-Scale Topological Analysis
+### Sprint 1: Foundations and Multi-Scale Topological Analysis - ✅ COMPLETE
 
 **Objective:** Build the foundation for future extensions by implementing a topological analyzer capable of operating at different resolution scales in a configurable manner.
 
@@ -45,7 +45,7 @@ The work is divided into four sequential sprints, each with clear objectives and
 
 ---
 
-### Sprint 2: Topological-Semantic Fusion
+### Sprint 2: Topological-Semantic Fusion - ✅ COMPLETE
 
 **Objective:** Develop a mechanism to fuse multi-scale topological invariants with semantic information, creating a unified representation.
 

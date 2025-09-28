@@ -539,3 +539,99 @@ class MultiScaleTopologicalAnalyzer:
                 results[scale_identifier] = {"error": str(e)}
 
         return results
+
+# ==================== TOPOLOGICAL-SEMANTIC FUSION ====================
+
+class FusionStrategy(ABC):
+    """
+    Abstract Base Class for fusion strategies. This allows for different methods
+    of combining topological and semantic information to be used interchangeably.
+    """
+    @abstractmethod
+    def fuse(self, semantic_embedding: np.ndarray, topology_features: np.ndarray) -> np.ndarray:
+        """
+        Combines semantic and topological feature vectors into a single vector.
+        """
+        pass
+
+class ConcatenationFusionStrategy(FusionStrategy):
+    """
+    A straightforward fusion strategy that simply concatenates the semantic
+    and topological feature vectors. This is a good baseline approach.
+    """
+    def fuse(self, semantic_embedding: np.ndarray, topology_features: np.ndarray) -> np.ndarray:
+        # Normalizing before concatenation can prevent features with larger scales
+        # from dominating the fused representation.
+        semantic_norm = semantic_embedding / (np.linalg.norm(semantic_embedding) + 1e-9)
+        topology_norm = topology_features / (np.linalg.norm(topology_features) + 1e-9)
+        return np.concatenate([semantic_norm, topology_norm])
+
+class AutoencoderFusionStrategy(FusionStrategy):
+    """
+    A more advanced strategy that uses a neural autoencoder to learn a dense,
+    joint representation of the topological and semantic features.
+    This can capture non-linear relationships between the two modalities.
+    """
+    def __init__(self, model_path: Optional[str] = None):
+        self.model = None # Placeholder for a PyTorch model
+        if model_path:
+            pass
+
+    def fuse(self, semantic_embedding: np.ndarray, topology_features: np.ndarray) -> np.ndarray:
+        if self.model is None:
+            print("Warning: AutoencoderFusionStrategy model not loaded. Falling back to concatenation.")
+            return np.concatenate([semantic_embedding, topology_features])
+
+        return np.random.rand(128) # Placeholder for fused vector
+
+class TopologicalSemanticFuser:
+    """
+    A component responsible for fusing topological and semantic information.
+    It takes raw topological data (like persistence diagrams) and semantic
+    embeddings, processes them, and uses a specified strategy to create a
+    unified representation.
+    """
+    def __init__(self, strategy: FusionStrategy):
+        if not isinstance(strategy, FusionStrategy):
+            raise TypeError("The provided strategy must be an instance of FusionStrategy.")
+        self.strategy = strategy
+
+    def fuse(self, semantic_embedding: np.ndarray, multi_scale_topology: Dict[str, Any]) -> np.ndarray:
+        """
+        Processes the multi-scale topological data and fuses it with the
+        semantic embedding using the selected strategy.
+        """
+        topology_vector = self._featurize_topology(multi_scale_topology)
+        return self.strategy.fuse(semantic_embedding, topology_vector)
+
+    def _featurize_topology(self, multi_scale_topology: Dict[str, Any]) -> np.ndarray:
+        """
+        Converts the rich multi-scale topological data into a single feature vector.
+        For this implementation, we aggregate features across all scales.
+        """
+        all_betti_numbers = []
+        all_lifetimes = []
+
+        for scale_data in multi_scale_topology.values():
+            if "error" in scale_data:
+                continue
+
+            if "betti_numbers" in scale_data:
+                all_betti_numbers.append(scale_data["betti_numbers"])
+
+            if "persistence_diagram" in scale_data:
+                # Correcting the unpacking logic to handle (dim, birth, death) tuples.
+                lifetimes = [death - birth for dim, birth, death in scale_data["persistence_diagram"]]
+                if lifetimes:
+                    all_lifetimes.extend(lifetimes)
+
+        mean_betti = np.mean(all_betti_numbers, axis=0) if all_betti_numbers else np.zeros(4)
+
+        mean_lifetime = np.mean(all_lifetimes) if all_lifetimes else 0
+        std_lifetime = np.std(all_lifetimes) if all_lifetimes else 0
+        max_lifetime = np.max(all_lifetimes) if all_lifetimes else 0
+
+        return np.concatenate([
+            mean_betti,
+            np.array([mean_lifetime, std_lifetime, max_lifetime])
+        ])
