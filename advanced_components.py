@@ -1,4 +1,3 @@
----
 # ===========================================
 # Extension Module: extensions/advanced_components.py
 # ===========================================
@@ -13,9 +12,11 @@ from scipy import sparse
 from sklearn.manifold import MDS
 import torch
 import torch.nn as nn
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any, Tuple, Callable, Optional
+from abc import ABC, abstractmethod
 import gudhi  # For persistent homology
 import networkx as nx
+from scaf_advanced_implementation import AdvancedTopologicalAnalyzer
 
 # ==================== ADVANCED TOPOLOGY ====================
 
@@ -410,3 +411,131 @@ class AdaptivePipelineOrchestrator:
         """Applica adattamento a pipeline"""
         # Modifica pipeline secondo azione
         return pipeline
+
+# ==================== MULTI-SCALE TOPOLOGICAL ANALYSIS ====================
+
+class ScalingStrategy(ABC):
+    """
+    Abstract Base Class for defining scaling strategies in topological analysis.
+    This allows for a plug-and-play architecture where the method of defining
+    "scale" can be adapted to the specific domain or data type.
+    """
+    @abstractmethod
+    def generate_scales(self, data: Any, config: Dict) -> List[Dict]:
+        """
+        Generates a list of scale configurations to be analyzed.
+        Each configuration is a dictionary of parameters for a single analysis run.
+        """
+        pass
+
+class FiltrationScalingStrategy(ScalingStrategy):
+    """
+    A scaling strategy based on varying the filtration value (e.g., max_edge_length)
+    for persistent homology, typically used for point cloud data.
+    This helps understand how topological features appear and disappear as the
+    connectivity of the data changes.
+    """
+    def generate_scales(self, data: Any, config: Dict) -> List[Dict]:
+        """
+        Generates scales based on a range of filtration values.
+        The config should contain a 'filtration_config' block with 'min_radius',
+        'max_radius', and 'steps'.
+        """
+        strategy_config = config.get("filtration_config", {})
+        min_r = strategy_config.get("min_radius", 0.5)
+        max_r = strategy_config.get("max_radius", 5.0)
+        steps = strategy_config.get("steps", 10)
+        return [{"max_edge_length": r} for r in np.linspace(min_r, max_r, steps)]
+
+class GraphDecompositionStrategy(ScalingStrategy):
+    """
+    A scaling strategy for graph data. Scales are defined by graph decomposition
+    methods, such as k-core decomposition. This is useful for analyzing the
+    robustness and hierarchical structure of networks.
+    """
+    def generate_scales(self, data: nx.Graph, config: Dict) -> List[Dict]:
+        """
+        Generates scales based on k-core decomposition of the graph.
+        Each scale corresponds to analyzing a specific k-core subgraph.
+        """
+        if not isinstance(data, nx.Graph):
+            return []
+
+        core_numbers = nx.core_number(data)
+        if not core_numbers:
+             return []
+        max_core = max(core_numbers.values())
+        return [{"k_core": k} for k in range(1, max_core + 1)]
+
+class MultiScaleTopologicalAnalyzer:
+    """
+    Analyzes topological features of data across multiple scales.
+    This is crucial because topological invariants are highly dependent on the
+    scale of observation. A feature that is prominent at one scale may be noise
+    at another. This analyzer provides a more holistic view by systematically
+    exploring different resolutions.
+    """
+    def __init__(self, strategy: ScalingStrategy):
+        """
+        Initializes the analyzer with a specific scaling strategy.
+        This follows the Strategy Pattern, decoupling the analysis logic from
+        the method of generating scales. This makes the system extensible;
+        new scaling methods can be added without changing this class.
+        """
+        if not isinstance(strategy, ScalingStrategy):
+            raise TypeError("The provided strategy must be an instance of ScalingStrategy.")
+        self.strategy = strategy
+        self.analyzer = AdvancedTopologicalAnalyzer(max_dimension=3)
+
+    def analyze(self, data: Any, config: Dict) -> Dict[str, Any]:
+        """
+        Performs multi-scale analysis and returns a dictionary of results.
+
+        The output is structured with scale identifiers as keys, making it easy
+        to compare topological features across different resolutions. This is
+        fundamental for the subsequent fusion and optimization steps.
+        """
+        scales = self.strategy.generate_scales(data, config)
+        results = {}
+
+        for i, scale_config in enumerate(scales):
+            scale_identifier = f"scale_{i}_{'_'.join([f'{k}_{v:.3f}' if isinstance(v, float) else f'{k}_{v}' for k, v in scale_config.items()])}"
+
+            try:
+                if "max_edge_length" in scale_config:
+                    if not isinstance(data, np.ndarray):
+                        raise ValueError("FiltrationScalingStrategy requires NumPy array data.")
+
+                    rips_complex = gudhi.RipsComplex(points=data, max_edge_length=scale_config["max_edge_length"])
+                    simplex_tree = rips_complex.create_simplex_tree(max_dimension=self.analyzer.max_dimension)
+                    persistence = simplex_tree.persistence()
+
+                    results[scale_identifier] = {
+                        "betti_numbers": self.analyzer._compute_betti_numbers(persistence),
+                        "persistence_diagram": [(d, b, t) for d, (b, t) in persistence if t != float('inf')],
+                        "euler_characteristic": self.analyzer._compute_euler_characteristic(simplex_tree)
+                    }
+
+                elif "k_core" in scale_config:
+                    if not isinstance(data, nx.Graph):
+                        raise ValueError("GraphDecompositionStrategy requires NetworkX graph data.")
+
+                    k = scale_config["k_core"]
+                    subgraph = nx.k_core(data, k)
+
+                    clique_complex = gudhi.SimplexTree()
+                    for clique in nx.find_cliques(subgraph):
+                        clique_complex.insert(clique)
+
+                    clique_complex.persistence()
+                    persistence = clique_complex.persistence()
+                    results[scale_identifier] = {
+                        "betti_numbers": self.analyzer._compute_betti_numbers(persistence),
+                        "persistence_diagram": [(d, b, t) for d, (b, t) in persistence if t != float('inf')],
+                        "euler_characteristic": self.analyzer._compute_euler_characteristic(clique_complex)
+                    }
+
+            except Exception as e:
+                results[scale_identifier] = {"error": str(e)}
+
+        return results

@@ -99,6 +99,26 @@ invariants:
     - name: "contextual_coherence"
       weight: 0.5
 
+# Multi-Scale Topology Configuration
+multi_scale_topology:
+  # Defines the strategy for multi-scale analysis.
+  # Available options: "filtration", "graph_decomposition"
+  strategy: "filtration"
+
+  # Configuration for the 'filtration' strategy.
+  # Used when analyzing point cloud data.
+  filtration_config:
+    min_radius: 0.5
+    max_radius: 5.0
+    steps: 10
+
+  # Configuration for the 'graph_decomposition' strategy.
+  # Used when analyzing graph data.
+  graph_decomposition_config:
+    # Currently uses k-core decomposition, which doesn't require extra params,
+    # but we can add placeholders for future extensions (e.g., community detection resolution).
+    placeholder: "value"
+
 # Bias Detection Configuration
 bias_detection:
   types:

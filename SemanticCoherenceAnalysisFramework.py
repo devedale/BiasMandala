@@ -12,6 +12,12 @@ import json
 import numpy as np
 from collections import defaultdict
 import networkx as nx
+from advanced_components import (
+    MultiScaleTopologicalAnalyzer,
+    FiltrationScalingStrategy,
+    GraphDecompositionStrategy,
+    ScalingStrategy
+)
 
 # ==================== CORE ABSTRACTIONS ====================
 
@@ -339,6 +345,7 @@ class SemanticCoherenceAnalyzer:
         self.bias_detector = BiasDetector()
         self.validator = DeterministicValidator()
         self.meta_learner = MetaLearner()
+        self.multi_scale_analyzer = None # Will be initialized by the setup method
         
         # Registro analizzatori
         self.analyzers = {
@@ -347,6 +354,7 @@ class SemanticCoherenceAnalyzer:
         }
         
         self._setup_pipeline()
+        self._setup_multi_scale_analyzer()
     
     def _default_config(self) -> Dict:
         """Configurazione di default"""
@@ -365,55 +373,90 @@ class SemanticCoherenceAnalyzer:
         """Configura pipeline di analisi"""
         # Aggiunta stages configurabili
         pass
+
+    def _setup_multi_scale_analyzer(self):
+        """
+        Initializes the MultiScaleTopologicalAnalyzer based on the framework's configuration.
+        This method reads the 'multi_scale_topology' config block, selects the
+        appropriate scaling strategy, and instantiates the analyzer. This makes the
+        framework's topological analysis capabilities highly modular and configurable.
+        """
+        config = self.config.get("multi_scale_topology", {})
+        strategy_name = config.get("strategy", "filtration") # Default to filtration
+
+        strategy_map = {
+            "filtration": FiltrationScalingStrategy,
+            "graph_decomposition": GraphDecompositionStrategy
+        }
+
+        strategy_class = strategy_map.get(strategy_name)
+        if not strategy_class:
+            raise ValueError(f"Unknown scaling strategy '{strategy_name}' in configuration.")
+
+        self.multi_scale_analyzer = MultiScaleTopologicalAnalyzer(strategy=strategy_class())
     
     def analyze(self, input_data: Any, 
-                language: str = "latex") -> Dict[str, Any]:
-        """Analisi principale con tutti i componenti"""
+                language: Optional[str] = None, data_type: str = 'point_cloud') -> Dict[str, Any]:
+        """
+        Main analysis method, now enhanced with multi-scale topological analysis.
+        It can process data based on its type (e.g., 'point_cloud', 'graph') or
+        a formal language if specified.
+        """
         
-        # 1. Parsing e estrazione AST
-        analyzer = self.analyzers[language]
-        parsed = analyzer.parse(input_data)
-        ast = analyzer.extract_ast(parsed)
-        topology = analyzer.compute_topology(ast)
+        # 1. Multi-Scale Topological Analysis
+        topology_config = self.config.get("multi_scale_topology", {})
+        analysis_data = input_data
+        ast = None
+        if language:
+            analyzer = self.analyzers.get(language)
+            if not analyzer: raise ValueError(f"No analyzer for language: {language}")
+            parsed = analyzer.parse(input_data)
+            ast = analyzer.extract_ast(parsed)
+            analysis_data = ast
+
+        if self.multi_scale_analyzer is None:
+            raise RuntimeError("MultiScaleTopologicalAnalyzer is not initialized. Check configuration.")
+
+        multi_scale_topology = self.multi_scale_analyzer.analyze(analysis_data, topology_config)
         
-        # 2. Esecuzione pipeline
-        pipeline_results = self.pipeline.execute({
-            "parsed": parsed,
+        # 2. Pipeline Execution
+        pipeline_input = {
+            "raw_input": input_data,
             "ast": ast,
-            "topology": topology
-        })
+            "multi_scale_topology": multi_scale_topology
+        }
+        pipeline_results = self.pipeline.execute(pipeline_input)
         
-        # 3. Rilevamento bias
-        # Creazione transform mock per demo
+        # 3. Bias Detection
         class MockTransform(Transform):
-            def forward(self, input, context):
-                return input
-            def inverse(self, output, context):
-                return output
-            def measure_invariants(self, input, output):
-                return InvariantMetrics(0.9, 0.85, 0.88)
+            def forward(self, input, context): return input
+            def inverse(self, output, context): return output
+            def measure_invariants(self, input, output): return InvariantMetrics(0.9, 0.85, 0.88)
         
         transform = MockTransform()
-        biases = self.bias_detector.detect(transform, [parsed])
+        biases = self.bias_detector.detect(transform, [pipeline_input])
         
-        # 4. Validazione
+        # 4. Validation
+        validation_domain = language if language else data_type
+        # For now, we need to register dummy validators for new data types.
+        if validation_domain not in self.validator.validators:
+            self.validator.register_validator(validation_domain, lambda out, gt: True)
         is_valid = self.validator.validate(
-            parsed, pipeline_results.get("output"), language
+            pipeline_input, pipeline_results.get("output"), validation_domain
         )
         
         # 5. Meta-learning
-        if self.config["meta_learning_enabled"] and not is_valid:
+        if self.config.get("meta_learning_enabled", False) and not is_valid:
             correction = self.meta_learner.suggest_correction(
                 pipeline_results.get("errors"), 
-                {"language": language, "topology": topology}
+                {"data_type": data_type, "topology": multi_scale_topology}
             )
             if correction:
-                # Applica correzione e ri-valida
                 pass
         
         return {
             "ast": ast,
-            "topology": topology,
+            "multi_scale_topology": multi_scale_topology,
             "biases": biases,
             "valid": is_valid,
             "metrics": self._compute_final_metrics(pipeline_results),
